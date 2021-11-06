@@ -93,6 +93,7 @@ __device__ void vm_init(VirtualMemory *vm, uchar *buffer, uchar *storage,
 }
 
 __device__ void mark_use(VirtualMemory *vm, u32 mem_entry) {
+
     if(IS_TAIL(vm,GET_TAIL_NODE(vm)==0)){
       /* initial condition */
       SET_TAIL(vm,mem_entry);
@@ -104,20 +105,43 @@ __device__ void mark_use(VirtualMemory *vm, u32 mem_entry) {
       SET_HEAD_NODE(vm,mem_entry);
       return;
     }
-    if(IS_TAIL(vm,mem_entry) && !IS_HEAD(vm,mem_entry)) {
-      u32 new_tail = GET_PREV(vm,mem_entry);
-      SET_TAIL(vm,new_tail);
-      SET_TAIL_NODE(vm,new_tail);
-      UNSET_TAIL(vm,mem_entry);
+
+    if(IS_INVALID(vm,GET_PREV(vm,mem_entry)) && IS_INVALID(vm,GET_NEXT(vm,mem_entry))) {
+      /* not in list or the only one as head */
+      if(!IS_HEAD(vm,mem_entry)){
+        u32 old_head = GET_HEAD_NODE(vm);
+        UNSET_HEAD(vm,old_head);
+        SET_HEAD(vm,mem_entry);
+        SET_HEAD_NODE(vm,mem_entry);
+        SET_NEXT(vm,mem_entry,old_head);
+        SET_PREV(vm,old_head,mem_entry);
+      }
     }
-    if(!IS_HEAD(vm,mem_entry)){
-      u32 old_head = GET_HEAD_NODE(vm);
-      UNSET_HEAD(vm,old_head);
-      SET_HEAD(vm,mem_entry);
-      SET_HEAD_NODE(vm,mem_entry);
-      SET_NEXT(vm,mem_entry,old_head);
-      SET_PREV(vm,old_head,mem_entry);
+    else{
+      /* in list */
+      if(IS_TAIL(vm,mem_entry) && !IS_HEAD(vm,mem_entry)) {
+        u32 new_tail = GET_PREV(vm,mem_entry);
+        SET_TAIL(vm,new_tail);
+        SET_TAIL_NODE(vm,new_tail);
+        UNSET_TAIL(vm,mem_entry);
+        return;
+      }
+      if(!IS_HEAD(vm,mem_entry)){
+        u32 old_head = GET_HEAD_NODE(vm);
+        /** delete node from list **/
+        u32 old_prev = GET_PREV(vm,mem_entry);
+        u32 old_next = GET_NEXT(vm,mem_entry);
+        /** set node as new head **/
+        SET_PREV(vm,old_next,old_prev);
+        SET_NEXT(vm,old_prev,old_next);
+        UNSET_HEAD(vm,old_head);
+        SET_HEAD(vm,mem_entry);
+        SET_HEAD_NODE(vm,mem_entry);
+        SET_NEXT(vm,mem_entry,old_head);
+        SET_PREV(vm,old_head,mem_entry);
+      }
     }
+
 }
 
 __device__ void swap_in(VirtualMemory *vm,u32 mem_entry, u32 disk_entry) {
