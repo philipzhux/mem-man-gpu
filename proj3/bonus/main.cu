@@ -10,64 +10,71 @@
 #define OUTFILE "./snapshot.bin"
 
 // page size is 32bytes
-#define PAGE_SIZE (1 << 5)
+#define PAGE_SIZE_C (1 << 5)
 // 16 KB in page table
-#define INVERT_PAGE_TABLE_SIZE (1 << 14)
+#define INVERT_PAGE_TABLE_SIZE_C (1 << 14)
 // 32 KB in shared memory
-#define PHYSICAL_MEM_SIZE (1 << 15)
+#define PHYSICAL_MEM_SIZE_C (1 << 15)
 // 128 KB in global memory
-#define STORAGE_SIZE (1 << 17)
+#define STORAGE_SIZE_C (1 << 17)
 
 //// count the pagefault times
 __device__ __managed__ int pagefault_num = 0;
 
 // data input and output
-__device__ __managed__ uchar results[STORAGE_SIZE];
-__device__ __managed__ uchar input[STORAGE_SIZE];
+__device__ __managed__ uchar results[STORAGE_SIZE_C];
+__device__ __managed__ uchar input[STORAGE_SIZE_C];
 
 // memory allocation for virtual_memory
 // secondary memory
-__device__ __managed__ uchar storage[STORAGE_SIZE];
+__device__ __managed__ uchar storage[STORAGE_SIZE_C];
 // page table
 extern __shared__ u32 pt[];
 
 
 
 
-__device__ void user_program(VirtualMemory *vm, uchar *input, uchar *results,
-                             int input_size);
-
-Lock::Lock(void){
-    int state[5];
-    for(int i=0; i<5; i++){
-      state[i] = 0;
-    }
-    cudaMalloc((void**) &mutex, sizeof(int)*5);
-    cudaMemcpy(mutex, &state, sizeof(int)*5, cudaMemcpyHostToDevice);
-}
-
-Lock::~Lock(void){
-    cudaFree(mutex);
-}
-
-__device__ void Lock::lock(int index){
-    while(atomicCAS(mutex+index, 0, 1) != 0);
-  }
-
-__device__ void Lock::unlock(){
-    atomicExch(mutex+index, 0);
-}
 
 
-__device__ void Lock::try_lock(){
-    atomicExch(mutex+index, 1);
-}
-__global__ void mykernel(int input_size, Lock lock_set) {
+/* Lock not applicable in the same block
+   Putting threads in different blocks is
+   not applicable either as teh shared memory
+   can't be shared across blocks, therefore
+   the lock method is abandoned
+*/
+
+// Lock::Lock(void){
+//     int state[5];
+//     for(int i=0; i<5; i++){
+//       state[i] = 0;
+//     }
+//     cudaMalloc((void**) &mutex, sizeof(int)*5);
+//     cudaMemcpy(mutex, &state, sizeof(int)*5, cudaMemcpyHostToDevice);
+// }
+
+// Lock::~Lock(void){
+//     cudaFree(mutex);
+// }
+
+// __device__ void Lock::lock(int index){
+//     while(atomicCAS(mutex+index, 0, 1) != 0);
+//   }
+
+// __device__ void Lock::unlock(int index){
+//     atomicExch(mutex+index, 0);
+// }
+
+
+// __device__ void Lock::try_lock(int index){
+//     atomicExch(mutex+index, 1);
+// }
+__global__ void mykernel(int input_size) {
 
   // memory allocation for virtual_memory
   // take shared memory as physical memory
-  __shared__ uchar data[PHYSICAL_MEM_SIZE];
-  int index = blockIdx.x;
+  __shared__ uchar data[PHYSICAL_MEM_SIZE_C];
+  // __shared__ u32 pt[(INVERT_PAGE_TABLE_SIZE_C>>2)];
+  u32 index = threadIdx.x;
   VirtualMemory vm;
   vm.buffer = data;
   vm.storage = storage;
@@ -75,14 +82,22 @@ __global__ void mykernel(int input_size, Lock lock_set) {
   vm.pagefault_num_ptr = &pagefault_num;
 
   // init constants
-  vm.PAGESIZE = PAGESIZE;
-  vm.INVERT_PAGE_TABLE_SIZE = INVERT_PAGE_TABLE_SIZE;
-  vm.PHYSICAL_MEM_SIZE = PHYSICAL_MEM_SIZE;
-  vm.STORAGE_SIZE = STORAGE_SIZE;
-  vm.PAGE_ENTRIES = PHYSICAL_MEM_SIZE / PAGE_SIZE;
-  if(!index) init_invert_page_table(&vm);
+  vm.PAGESIZE = PAGE_SIZE_C;
+  vm.INVERT_PAGE_TABLE_SIZE = INVERT_PAGE_TABLE_SIZE_C;
+  vm.PHYSICAL_MEM_SIZE = PHYSICAL_MEM_SIZE_C;
+  vm.STORAGE_SIZE = STORAGE_SIZE_C;
+  vm.PAGE_ENTRIES = PHYSICAL_MEM_SIZE_C / PAGE_SIZE_C;
+  init_invert_page_table(&vm);
+  __syncthreads();
   // user program the access pattern for testing paging
-  user_program(&vm, input, results, input_size, index, &lock_set);
+  if(index==0) user_program(&vm, input, results, input_size, index);
+  __syncthreads();
+  if(index==1) user_program(&vm, input, results, input_size, index);
+  __syncthreads();
+  if(index==2) user_program(&vm, input, results, input_size, index);
+  __syncthreads();
+  if(index==3) user_program(&vm, input, results, input_size, index);
+
 }
 
 __host__ void write_binaryFile(char *fileName, void *buffer, int bufferSize) {
@@ -122,12 +137,13 @@ __host__ int load_binaryFile(char *fileName, void *buffer, int bufferSize) {
 
 int main() {
   cudaError_t cudaStatus;
-  int input_size = load_binaryFile(DATAFILE, input, STORAGE_SIZE);
+  int input_size = load_binaryFile(DATAFILE, input, STORAGE_SIZE_C);
 
   /* Launch kernel function in GPU, with single thread
   and dynamically allocate INVERT_PAGE_TABLE_SIZE bytes of share memory,
   which is used for variables declared as "extern __shared__" */
-  mykernel<<<1, 1, INVERT_PAGE_TABLE_SIZE>>>(input_size);
+  // Lock lock_set;
+  mykernel<<<1, 4, INVERT_PAGE_TABLE_SIZE_C>>>(input_size);
 
   cudaStatus = cudaGetLastError();
   if (cudaStatus != cudaSuccess) {

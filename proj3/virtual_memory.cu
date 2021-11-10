@@ -1,8 +1,15 @@
 ﻿#include "virtual_memory.h"
 #include <cuda.h>
 #include <cuda_runtime.h>
-//#include <stdio.h>
+#include <stdio.h>
+#include <math.h>
 
+__device__ u32 hash(u32 x) {
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = ((x >> 16) ^ x) * 0x45d9f3b;
+    x = (x >> 16) ^ x;
+    return x;
+}
 __device__ void init_invert_page_table(VirtualMemory *vm) {
     for (int i = 0; i < vm->PAGE_ENTRIES; i++) {
         INIT(vm,i);
@@ -11,8 +18,10 @@ __device__ void init_invert_page_table(VirtualMemory *vm) {
         SET_NEXT_NULL(vm,i);
     }
 
-    for (int i=0; i < (vm->STORAGE_SIZE/vm->PAGESIZE);i++)
-        INIT_DISK_MAP(vm,i);
+    for (int i=0; i < (vm->STORAGE_SIZE/vm->PAGESIZE);i++) {
+      INIT_DISK_MAP(vm,i);
+      SET_DISK_INVALID(vm,i);
+    }
     SET_COUNT(vm,0);
     SET_EMPTY(vm);
 
@@ -88,16 +97,26 @@ __device__ void mark_use(VirtualMemory *vm, u32 mem_entry) {
 }
 
 __device__ void swap_in(VirtualMemory *vm,u32 mem_entry, u32 disk_entry) {
+    //printf("[SWAP IN] FROM DISK PAGE#%d to MEM PAGE#%d VM=%d\n",disk_entry,mem_entry,GET_VM_FROM_DISK(vm,disk_entry));
     for(u32 i=0;i<vm->PAGESIZE;i++)
-       vm->buffer[(mem_entry<<5|(i&0x1F))] = vm->storage[(disk_entry<<5|(i&0x1F))];
+       vm->buffer[(mem_entry<<5)+i] = vm->storage[(disk_entry<<5)+i];
     UNSET_DIRTY(vm,mem_entry); // fresh entry certainly not dirty
 }
 
-__device__ void swap_out(VirtualMemory *vm,u32 mem_entry, u32 disk_entry, u32 vm_addr) {
+__device__ void swap_out(VirtualMemory *vm,u32 mem_entry, u32 vm_addr) {
+   u32 disk_entry;
+   u32 i;
+    for(i=0; i < (vm->STORAGE_SIZE/vm->PAGESIZE); i++) {
+      disk_entry = HASH_DISK(vm_addr,i);
+      if(DISK_IS_INVALID(vm,disk_entry)!=0) break;
+      if(GET_VM_FROM_DISK(vm,disk_entry)==vm_addr) break;
+    }
     UNSET_DISK_INVALID(vm,disk_entry);
     SET_DISK_TO_VM(vm,disk_entry,0,vm_addr);
+    // if(i==(vm->STORAGE_SIZE/vm->PAGESIZE)) printf("[ERROR] VM=%d",vm_addr);
+    // printf("[SWAP OUT] FROM MEM PAGE#%d to DISK PAGE#%d \n VM=%d",mem_entry,disk_entry,vm_addr);
     for(u32 i=0;i<vm->PAGESIZE;i++)
-      vm->storage[(disk_entry<<5|(i&0x1F))] = vm->buffer[(mem_entry<<5|(i&0x1F))];
+      vm->storage[(disk_entry<<5)+i] = vm->buffer[(mem_entry<<5)+i];
 }
 
 __device__ u32 extract_lru(VirtualMemory *vm) {
@@ -116,13 +135,12 @@ __device__ u32 evict_lru(VirtualMemory *vm) {
     u32 target = extract_lru(vm);
     u32 disk_entry;
     u32 vm_page_addr = GET_ADDR(vm,target);
+    u32 i;
     if(IS_DIRTY(vm,target)){
-      for(u32 i=0; i < (vm->STORAGE_SIZE/vm->PAGESIZE); i++) {
-      disk_entry = HASH_DISK(vm_page_addr,i);
-      if(DISK_IS_INVALID(vm,disk_entry)) break;
-    }
+    swap_out(vm,target,vm_page_addr);
+    //if(DISK_IS_INVALID(vm,disk_entry)==0) printf("ERROR ON DISK ENTRY %d; i=%d\n",disk_entry,i);
     //printf("SWAPPED OUT MEM #%d to DISK #%d",target,disk_entry);
-    swap_out(vm,target,disk_entry,vm_page_addr);
+    //swap_out(vm,target,disk_entry,vm_page_addr);
     }
     
     return target;
@@ -142,6 +160,7 @@ __device__ uchar vm_read(VirtualMemory *vm, u32 addr) {
       if(IS_INVALID(vm,mem_entry)) break;
       if(GET_ADDR(vm,mem_entry) == vm_page_addr) {
         mark_use(vm,mem_entry);
+        //printf("VM[%d]: Found and read mem page: #%d\n",addr,mem_entry);
         return vm->buffer[((mem_entry<<5) | vm_page_offset)];
       }
 
@@ -157,6 +176,7 @@ __device__ uchar vm_read(VirtualMemory *vm, u32 addr) {
         SET_ADDR(vm,mem_entry,vm_page_addr);
         SET_COUNT(vm,GET_COUNT(vm)+1);
         /* swap_in and mark use */
+        //printf("VM[%d]: Unfound in mem and swap from disk %d to mem %d\n",addr,disk_entry,mem_entry);
         swap_in(vm,mem_entry,disk_entry);
         mark_use(vm,mem_entry);
         //return;
@@ -171,6 +191,7 @@ __device__ uchar vm_read(VirtualMemory *vm, u32 addr) {
       if(IS_INVALID(vm,mem_entry)==0 && GET_ADDR(vm,mem_entry) == vm_page_addr){
         mark_use(vm,mem_entry);
         //printf("Page found: #%d\n",mem_entry);
+        //printf("VM[%d]: Found and read mem page: #%d\n",addr,mem_entry);
         return vm->buffer[((mem_entry<<5) | vm_page_offset)];
       }
     }
@@ -182,8 +203,8 @@ __device__ uchar vm_read(VirtualMemory *vm, u32 addr) {
       if(DISK_IS_INVALID(vm,disk_entry)) break;
       //printf("DISK_VM: #%d MY_VM: #%d\n",GET_VM_FROM_DISK(vm,disk_entry),vm_page_addr);
       if(GET_VM_FROM_DISK(vm,disk_entry)==vm_page_addr) {
-        //printf("Found on disk page: #%d\n",disk_entry);
         u32 destination = evict_lru(vm);
+        //printf("VM[%d]: evict mem page %d for it\n",vm_page_addr,destination);
         /* page allocation routine */
         UNSET_INVALID(vm,destination);
         SET_ADDR(vm,destination,vm_page_addr);
@@ -194,6 +215,7 @@ __device__ uchar vm_read(VirtualMemory *vm, u32 addr) {
         swap_in(vm,destination,disk_entry);
         mark_use(vm,destination);
         //return;
+        //printf("VM[%d]: Unfound in mem and swap from disk %d to mem %d\n",addr,disk_entry,destination);
         return vm->buffer[((destination<<5) | vm_page_offset)];
       }
     }
@@ -219,6 +241,7 @@ __device__ void vm_write(VirtualMemory *vm, u32 addr, uchar value) {
       if(GET_ADDR(vm,mem_entry) == vm_page_addr) {
         mark_use(vm,mem_entry);
         vm->buffer[((mem_entry<<5) | vm_page_offset)] = value;
+        //printf("VM[%d]: Already allocted and write to mem page: #%d\n",addr,mem_entry);
         SET_DIRTY(vm,mem_entry);
         return;
       }
@@ -232,6 +255,7 @@ __device__ void vm_write(VirtualMemory *vm, u32 addr, uchar value) {
     SET_DIRTY(vm,mem_entry); // dirty at born
     /** record new vm mapping **/
     SET_ADDR(vm,mem_entry,vm_page_addr);
+    //printf("VM[%d]: Allocate and write to mem page: #%d\n",addr,mem_entry);
     vm->buffer[((mem_entry<<5) | vm_page_offset)] = value;
     mark_use(vm,mem_entry);
   }
@@ -241,15 +265,34 @@ __device__ void vm_write(VirtualMemory *vm, u32 addr, uchar value) {
       if(GET_ADDR(vm,mem_entry) == vm_page_addr){
         SET_DIRTY(vm,mem_entry);
         mark_use(vm,mem_entry);
+        //printf("VM[%d]: Already allocted and write to mem page: #%d\n",addr,mem_entry);
         vm->buffer[((mem_entry<<5) | vm_page_offset)] = value;
         return;
       }
     }
-    
+
     /** unable to find in mem, page fault, evict a victim and place it there **/
     (*(vm->pagefault_num_ptr))++;
     u32 destination = evict_lru(vm);
-    //printf("Evict vitcim: #%d\n",destination);
+    // printf("VM[%d]: Evict vitcim: #%d\n",addr,destination);
+    // printf("VM[%d]: Allocate and write to mem page: #%d\n",addr, destination);
+    for(u32 i=0; i < (vm->STORAGE_SIZE/vm->PAGESIZE); i++) {
+      u32 disk_entry = HASH_DISK(vm_page_addr,i);
+      if(DISK_IS_INVALID(vm,disk_entry)) break; //cannot found in disk
+      if(GET_VM_FROM_DISK(vm,disk_entry)==vm_page_addr) {
+        /* page allocation routine */
+        UNSET_INVALID(vm,destination);
+        SET_ADDR(vm,destination,vm_page_addr);
+        /* swap_in and mark use */
+        // printf("VM[%d]: Unfound in mem and swap from disk %d to mem %d\n",addr,disk_entry,destination);
+        swap_in(vm,destination,disk_entry);
+        mark_use(vm,destination);
+        //return;
+        vm->buffer[((destination<<5) | vm_page_offset)] = value;
+        SET_DIRTY(vm,destination);
+        return;
+      }
+    }
     UNSET_INVALID(vm,destination);
     /** record new vm mapping **/
     SET_ADDR(vm,destination,vm_page_addr);
@@ -257,7 +300,6 @@ __device__ void vm_write(VirtualMemory *vm, u32 addr, uchar value) {
     mark_use(vm,destination);
     vm->buffer[((destination<<5) | vm_page_offset)] = value;
     return;
-
  }
 }
 

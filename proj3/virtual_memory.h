@@ -66,7 +66,7 @@
 #define GET_DISK_IMAP(vm,index) ((vm->invert_page_table[vm->PAGE_ENTRIES*2+index/2]) & (0xFFFF<<((index%2)*16))) >> ((index%2)*16)
 #define GET_VM_FROM_DISK(vm,index) (GET_DISK_IMAP(vm,index) & 0x1FFF)
 #define GET_PID_FROM_DISK(vm,index) ((GET_DISK_IMAP(vm,index) & 0x3<<13)>>13)
-#define DISK_IS_INVALID(vm,index) GET_BIT(15,GET_DISK_IMAP(vm,index))
+#define DISK_IS_INVALID(vm,index) GET_BIT(15+(index%2)*16,vm->invert_page_table[vm->PAGE_ENTRIES*2+index/2])
 #define SET_DISK_INVALID(vm,index) SET_BIT(15+(index%2)*16,vm->invert_page_table[vm->PAGE_ENTRIES*2+index/2])
 #define UNSET_DISK_INVALID(vm,index) UNSET_BIT(15+(index%2)*16,vm->invert_page_table[vm->PAGE_ENTRIES*2+index/2])
 #define CONSTRUCT_DISK_IMAP(pid,vm_addr) ((((vm_addr & 0x1FFF) | ((pid & 0x3) <<13))) & ~(1<<15))
@@ -78,8 +78,8 @@
 #define GET_COUNT(vm) ((vm->invert_page_table[(vm->PAGE_ENTRIES-1)*2] & (0x7FF<<15)) >> 15) //11 bit count
 
 
-#define HASH(key,i) (key%1021+i)%1024
-#define HASH_DISK(key,i) (key%4099+i)%4096
+#define HASH(key,i) (key%1024+i)%1024
+#define HASH_DISK(key,i) (key%4096+i)%4096
 
 
 typedef unsigned char uchar;

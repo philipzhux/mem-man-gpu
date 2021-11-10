@@ -15,9 +15,7 @@
 #define SET_BIT(b,t) t = t | (0x1<<b)
 #define UNSET_BIT(b,t) t = t & ~(0x1<<b)
 
-
-#define GET_PID(vm,index) ((vm->invert_page_table[index*2]>>13) & 0x3)
-#define GET_ADDR(vm,index) (vm->invert_page_table[index*2] & 0x1FFF)
+#define GET_ADDR(vm,index) (vm->invert_page_table[index*2] & 0x7FFF)
 #define GET_NEXT(vm,index) (vm->invert_page_table[index*2+1] & 0x3FF)
 #define GET_PREV(vm,index) ((vm->invert_page_table[index*2+1]>>11) & 0x3FF)
 
@@ -41,8 +39,8 @@
 #define UNSET_INVALID(vm,index) UNSET_BIT(DIRTY_BIT,vm->invert_page_table[index*2])
 
 
-#define SET_PID (vm,index,pid) vm->invert_page_table[index*2] = (vm->invert_page_table[index*2] & (~(0x3<<13)) | ((pid & 0x3) << 13))
-#define SET_ADDR(vm,index,addr,pid) vm->invert_page_table[index*2] = (vm->invert_page_table[index*2]& ~(0x1FFF))|(addr & 0x1FFF); SET_PID (vm,index,pid)
+#define SET_PID(vm,index,pid) vm->invert_page_table[index*2] = (vm->invert_page_table[index*2] & (~(0x3<<13)) | ((pid & 0x3) << 13))
+#define SET_ADDR(vm,index,addr) vm->invert_page_table[index*2] = ((vm->invert_page_table[index*2]& ~(0x7FFF))|(addr & 0x7FFF))
 
 
 #define SET_NEXT(vm,index,next_index) vm->invert_page_table[index*2+1] =\
@@ -65,22 +63,21 @@
 
 
 #define GET_DISK_IMAP(vm,index) ((vm->invert_page_table[vm->PAGE_ENTRIES*2+index/2]) & (0xFFFF<<((index%2)*16))) >> ((index%2)*16)
-#define GET_VM_FROM_DISK(vm,index) (GET_DISK_IMAP(vm,index) & 0x1FFF)
-#define GET_PID_FROM_DISK(vm,index) ((GET_DISK_IMAP(vm,index) & 0x3<<13)>>13)
-#define DISK_IS_INVALID(vm,index) GET_BIT(15,GET_DISK_IMAP(vm,index))
+#define GET_VM_FROM_DISK(vm,index) (GET_DISK_IMAP(vm,index) & 0x7FFF)
+#define DISK_IS_INVALID(vm,index) GET_BIT(15+(index%2)*16,vm->invert_page_table[vm->PAGE_ENTRIES*2+index/2])
 #define SET_DISK_INVALID(vm,index) SET_BIT(15+(index%2)*16,vm->invert_page_table[vm->PAGE_ENTRIES*2+index/2])
 #define UNSET_DISK_INVALID(vm,index) UNSET_BIT(15+(index%2)*16,vm->invert_page_table[vm->PAGE_ENTRIES*2+index/2])
-#define CONSTRUCT_DISK_IMAP(pid,vm_addr) ((((vm_addr & 0x1FFF) | ((pid & 0x3) <<13))) & ~(1<<15))
+#define CONSTRUCT_DISK_IMAP(vm_addr) (vm_addr & ~(1<<15))
 #define SET_DISK_TO_VM(vm,index,pid,vm_addr) vm->invert_page_table[vm->PAGE_ENTRIES*2+index/2] = \
-(vm->invert_page_table[vm->PAGE_ENTRIES*2+index/2] & ~(0xFFFF<<((index%2)*16)) | (CONSTRUCT_DISK_IMAP(pid,vm_addr) << ((index%2)*16)))
+(vm->invert_page_table[vm->PAGE_ENTRIES*2+index/2] & ~(0xFFFF<<((index%2)*16)) | (CONSTRUCT_DISK_IMAP(vm_addr) << ((index%2)*16)))
 
 
 #define SET_COUNT(vm,count) (vm->invert_page_table[(vm->PAGE_ENTRIES-1)*2] = ((vm->invert_page_table[(vm->PAGE_ENTRIES-1)*2] & ~(0x7FF<<15)) | (count<<15)))
 #define GET_COUNT(vm) ((vm->invert_page_table[(vm->PAGE_ENTRIES-1)*2] & (0x7FF<<15)) >> 15) //11 bit count
 
 
-#define HASH(key,i) (key%1021+i)%1024
-#define HASH_DISK(key,i) (key%4099+i)%4096
+#define HASH(key,i) (key%1024+i)%1024
+#define HASH_DISK(key,i) (key%4096+i)%4096
 
 
 typedef unsigned char uchar;
@@ -103,8 +100,9 @@ struct Lock{
   int *mutex;
   Lock(void);
   ~Lock(void);
-  __device__ void lock();
-  __device__ void unlock();
+  __device__ void lock(int index);
+  __device__ void unlock(int index);
+  __device__ void try_lock(int index);
 };
 
 // prototypes
@@ -113,14 +111,16 @@ __device__ void vm_init(VirtualMemory *vm, uchar *buffer, uchar *storage,
                         int PAGESIZE, int INVERT_PAGE_TABLE_SIZE,
                         int PHYSICAL_MEM_SIZE, int STORAGE_SIZE,
                         int PAGE_ENTRIES);
-__device__ uchar vm_read(VirtualMemory *vm, u32 addr);
-__device__ void vm_write(VirtualMemory *vm, u32 addr, uchar value);
+__device__ void init_invert_page_table(VirtualMemory *vm);
+__device__ uchar vm_read(VirtualMemory *vm, u32 addr, u32 pid);
+__device__ void vm_write(VirtualMemory *vm, u32 addr, uchar value, u32 pid);
 __device__ void vm_snapshot(VirtualMemory *vm, uchar *results, int offset,
-                            int input_size);
+                            int input_size, u32 pid);
 __device__ void mark_use(VirtualMemory *vm, u32 mem_entry);
 __device__ void swap_in(VirtualMemory *vm,u32 mem_entry, u32 disk_entry);
 __device__ u32 extract_lru(VirtualMemory *vm);
 __device__ u32 evict_lru(VirtualMemory *vm);
 __device__ void swap_out(VirtualMemory *vm,u32 mem_entry, u32 disk_entry, u32 vm_addr);
-
+__device__ void user_program(VirtualMemory *vm, uchar *input, uchar *results,
+                             int input_size, u32 pid);
 #endif

@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+//#define DATAFILE "./data.bin"
 #define DATAFILE "./data.bin"
 #define OUTFILE "./snapshot.bin"
 
