@@ -10,10 +10,6 @@ __device__ void user_program(VirtualMemory *vm, uchar *input, uchar *results,
     }
   }
 
-  // for (int i = input_size/2; i < input_size; i++){
-  //   if(pid==1) vm_write(vm, i, input[i],pid);
-  // }
-
   for (int i = input_size - 1; i >= input_size - 32769; i--)
     if(i%4==pid) int value = vm_read(vm, i,pid);
   
