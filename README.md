@@ -1,7 +1,7 @@
-# CSC 3150 Project 3 Report
+# Memory Management Simulation on GPU
 **Zhu Chuyan** 119010486 **at** *The Chinese University of Hong Kong, Shenzhen*
 ## Table of contents
-- [CSC 3150 Project 3 Report](#csc-3150-project-3-report)
+- [Memory Management Simulation on GPU](#memory-management-simulation-on-gpu)
   - [Table of contents](#table-of-contents)
   - [1. How to run the program](#1-how-to-run-the-program)
     - [1.1 Running environments](#11-running-environments)
@@ -55,8 +55,6 @@ Then you can simply run by:
 ## 2. Implementations
 ### 2.1 Single Process VM Simulation
 
- <figure align="center">
-
   ```mermaid
   graph TD;
   A["Virtual Memory"];
@@ -71,6 +69,9 @@ Then you can simply run by:
   A--"Search Disk Addr to Swap in/out"-->E;
   E--"Do swap"-->C;
   ```
+ <figure align="center">
+
+![fc1](https://i.imgur.com/RXsCol0.png)
 
   <figcaption>Figure 1: Main Program Implementation Flow Chart</figcaption>
   </figure>
@@ -182,4 +183,4 @@ PF: 12289
 ```
 
 ## 4. What I learn from the project
-I learn the principles of paging memory management system and how to implememnt them. I also learn that the an replacement algorithm (for example, LRU we use in the project) is of great importance in a paging system, and the utilize the memory as much as possible.
+*>>> This part is only for asssignment submission.*
