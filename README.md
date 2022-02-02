@@ -1,5 +1,5 @@
 # Memory Management Simulation on GPU
-**Zhu Chuyan** 119010486 **at** *The Chinese University of Hong Kong, Shenzhen*
+
 ## Table of contents
 - [Memory Management Simulation on GPU](#memory-management-simulation-on-gpu)
   - [Table of contents](#table-of-contents)
